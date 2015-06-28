@@ -816,7 +816,7 @@ sArray        dw 0                                     ;
               dw 0                                     ;
               dw 0                                     ;
 align 4                                                ;
-indexfile     db ".index.htm",0                        ;
+indexfile     db ".index.html",0                       ;
 align 4                                                ;
 NextLine      db " " ,0xa                              ; Next line
 .NextLine_size = $-NextLine                            ;
