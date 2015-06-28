@@ -1,0 +1,875 @@
+;======================================================;
+; Tiny Server.                                         ;
+;------------------------------------------------------;
+; By Craig Bamford (Dex)                  (11-03-2013) ;
+;------------------------------------------------------;
+format ELF executable                                  ;
+entry start                                            ;
+;======================================================;
+; Is logging enabled ?                                 ;
+;------------------------------------------------------;
+LOGGING = 1                                            ;
+LOGGING2 = 0                                           ;
+;======================================================;
+; Def                                                  ;
+;------------------------------------------------------;
+SOCK_STREAM       = 1                                  ;
+AF_INET           = 2                                  ;
+SYS_socketcall    = 102                                ;
+SYS_SOCKET        = 1                                  ;
+SYS_CONNECT       = 3                                  ;
+SYS_SEND          = 9                                  ;
+SYS_RECV          = 10                                 ;
+IPPROTO_TCP       = 6                                  ;   Transmission Control Protocol
+;======================================================;
+; Print macro                                          ;
+;------------------------------------------------------;
+macro print _msg,_msglen                               ;
+{ common                                               ;
+        push      (r0)                                 ;
+        push      (r1)                                 ;
+        push      (r2)                                 ;
+        push      (r7)                                 ;
+        mov       r7, 0x4                              ;
+        mov       r0, 0x1                              ;
+        imm32     r1, _msg                             ;
+        imm32     r2, _msglen                          ;
+        swi       0x0                                  ;
+                                                       ;
+        pop       (r7)                                 ;
+        pop       (r2)                                 ;
+        pop       (r1)                                 ;
+        pop       (r0)                                 ;
+}                                                      ;
+;======================================================;
+; old tcpsend macro                                    ;
+;------------------------------------------------------;
+macro tcpsend _msg,_msglen                             ;
+{ common                                               ;
+        push      (r0)                                 ;
+        push      (r1)                                 ;
+        push      (r2)                                 ;
+        push      (r3)                                 ;
+        push      (r7)                                 ;
+        imm32     r0, clientfd                         ;
+        ldr       r0, [r0]                             ;
+        imm32     r1, _msg                             ;
+        imm32     r2, _msglen                          ;
+        mov       r3, 0                                ;
+        imm32     r7, 0x121                            ;
+        swi       0x0                                  ;
+        pop       (r7)                                 ;
+        pop       (r3)                                 ;
+        pop       (r2)                                 ;
+        pop       (r1)                                 ;
+        pop       (r0)                                 ;
+}                                                      ;
+;======================================================;
+; old tcpsend macro                                    ;
+;------------------------------------------------------;
+; r0 = size to send                                    ;
+;------------------------------------------------------;
+macro tcpsend_reg _msg                                 ;
+{ common                                               ;
+        push      (r0)                                 ;
+        push      (r1)                                 ;
+        push      (r2)                                 ;
+        push      (r3)                                 ;
+        push      (r7)                                 ;
+        mov       r2, r0                               ;
+        imm32     r0, clientfd                         ;
+        ldr       r0, [r0]                             ;
+        imm32     r1, _msg                             ;
+        mov       r3, 0                                ;
+        imm32     r7, 0x121                            ;
+        swi       0x0                                  ;
+        pop       (r7)                                 ;
+        pop       (r3)                                 ;
+        pop       (r2)                                 ;
+        pop       (r1)                                 ;
+        pop       (r0)                                 ;
+}                                                      ;
+;======================================================;
+; Print macro                                          ;
+;------------------------------------------------------;
+;  r0 = string size                                    ;
+;------------------------------------------------------;
+macro print_reg _msg,_msglen                           ;
+{ common                                               ;
+        push      (r0)                                 ;
+        push      (r1)                                 ;
+        push      (r2)                                 ;
+        push      (r7)                                 ;
+        mov       r2, r0                               ;
+        mov       r7, 0x4                              ;
+        mov       r0, 0x1                              ;
+        imm32     r1, _msg                             ;
+        swi       0x0                                  ;
+                                                       ;
+        pop       (r7)                                 ;
+        pop       (r2)                                 ;
+        pop       (r1)                                 ;
+        pop       (r0)                                 ;
+}                                                      ;
+include 'FasmArm.inc'                              ;
+segment readable writeable executable                  ;
+;======================================================;
+; Main start                                           ;
+;------------------------------------------------------;
+start:                                                 ;
+        print msg,msg.msg_size                         ; print start message
+;======================================================;
+; Check commamd line for port number                   ;
+;------------------------------------------------------;
+        ldmfd     sp!, {r1}                            ;
+        imm32     r0, argc                             ;
+        str       r1, [r0]                             ;
+        mov       r0, 80                               ; default port number
+        cmp       r1, 1                                ;
+;======================================================;
+; If no number, use default (port 80)                  ;
+;------------------------------------------------------;
+        beq       UseDeFault                           ;
+;======================================================;
+; Convet  port number                                  ;
+;------------------------------------------------------;
+        ldmfd     sp!,{r1}                             ;
+        ldmfd     sp!,{r3}                             ;
+        mov       r4, 10                               ;
+        bl        StrToInt                             ;
+        mov       r0, r1                               ;
+        imm32     r1, portnumber                       ;
+        str       r0, [r1]                             ;
+align 4                                                ;
+UseDeFault:                                            ;
+;======================================================;
+; Store Port                                           ;
+;------------------------------------------------------;
+        rev16     r0, r0                               ; byte order
+        imm32     r1, sockaddr_in.sin_port             ;
+        strh      r0, [r1]                             ;
+;======================================================;
+; SOCKET(2)                                            ;
+;------------------------------------------------------;
+; Creates an endpoint for communication and returns    ;
+; a descriptor.                                        ;
+;------------------------------------------------------;                                                          ;
+        imm32     r7, 0x119                            ; socket sys number
+        mov       r0, AF_INET                          ;
+        mov       r1, SOCK_STREAM                      ;
+        mov       r2, 0                                ;
+        swi       0x0                                  ;
+        teq       r0, 0                                ;
+        bpl       bind                                 ; branch if not neg
+                                                       ;
+        mvn       r0, r0                               ;
+        add       r0, 1                                ; change neg to pos number
+        imm32     r1, 4096                             ; We need to check because some times address is neg
+        cmp       r0, r1                               ;
+        bl        Convert2Hex                          ; Get error code
+        print     print_hex_string,print_hex_string_size ;
+        print     msgE1,msgE1.msgE1_size               ; error message 1
+        b         fin                                  ; branch exit
+align 4                                                ;
+;======================================================;
+; BIND(2)                                              ;
+;------------------------------------------------------;
+; When a socket is created with socket(2),             ;
+; it exists in a name space (address family) but has   ;
+; no address assigned to it. bind() assigns the        ;
+; address specified to by addr to the socket referred  ;
+; to by the file descriptor sockfd. addrlen specifies  ;
+; the size, in bytes, of the address structure pointed ;
+; to by addr. Traditionally, this operation is called  ;
+; "assigning a name to a socket".                      ;
+;------------------------------------------------------;
+bind:                                                  ; Ok  SOCKET(2)
+        imm32     r1, sockfd                           ;
+        str       r0, [r1]                             ;
+                                                       ;
+        imm32     r0, sockfd                           ; bind(int sockfd, const struct sockaddr *addr,socklen_t addrlen);
+        ldr       r0, [r0]                             ;
+        imm32     r1, sockaddr_in                      ;
+        imm32     r2, dest_size                        ;
+        imm32     r7, 0x11A                            ; BIND(2)
+        swi       0x0                                  ;
+                                                       ;
+        teq       r0, 0                                ; check for errors
+        bpl       listen                               ; branch if not neg
+                                                       ;
+        mvn       r0, r0                               ;
+        add       r0, 1                                ; change neg to pos number
+        imm32     r1, 4096                             ; We need to check because some times address is neg
+        cmp       r0, r1                               ;
+        bl        Convert2Hex                          ; Get error code
+        print     print_hex_string,print_hex_string_size ;
+        print     msgE2,msgE2.msgE2_size               ; error message 1
+        b         fin                                  ; branch exit
+                                                       ; Ok BIND(2)
+;======================================================;
+; LISTEN(2)                                            ;
+;------------------------------------------------------;
+; Start to listen for incomming connections,           ;
+; allowing for a queue size of                         ;
+; waiting connections of 20.                           ;
+;------------------------------------------------------;
+align 4                                                ;
+listen:                                                ;
+        imm32     r0, sockfd                           ; listen(int sockfd, int backlog);
+        ldr       r0, [r0]                             ;
+        mov       r1, 0                                ; was 20 *****
+        imm32     r7, 0x11C                            ; LISTEN(2)
+        swi       0x0                                  ;
+                                                       ;
+        teq       r0, 0                                ; check for errors
+        bpl       infinity                             ; branch if not neg
+                                                       ;
+        mvn       r0, r0                               ;
+        add       r0, 1                                ; change neg to pos number
+        imm32     r1, 4096                             ; We need to check because some times address is neg
+        cmp       r0, r1                               ;
+        bl        Convert2Hex                          ; Get error code
+        print     print_hex_string,print_hex_string_size ;
+        print     msgE3,msgE3.msgE3_size               ;  error message 1
+        b         fin                                  ; branch exit
+align 4                                                ;
+infinity:                                              ; Ok LISTEN(2)
+;======================================================;
+; ACCEPT(2)                                            ;
+;------------------------------------------------------;
+; The accept() system call is used with                ;
+; connection-based socket types (SOCK_STREAM,          ;
+; SOCK_SEQPACKET). It extracts the first connection    ;
+; request on the queue of pending connections for the  ;
+; listening socket, sockfd, creates a new connected    ;
+; socket, and returns a new file descriptor referring  ;
+; to that socket. The newly created socket is not in   ;
+; the listening state. The original socket sockfd is   ;
+; unaffected by this call.                             ;
+;------------------------------------------------------;
+accept_loop:                                           ;
+        imm32     r0, sockfd                           ;
+        ldr       r0, [r0]                             ;
+        imm32     r1, client_addr_ip                   ; client_addr
+        imm32     r2, sixteen                          ; addrlen
+        imm32     r7, 0x11D                            ; ACCEPT(2)
+        swi       0x0                                  ;
+                                                       ;
+        teq       r0, 0                                ; check for errors
+        bgt       accept_ok                            ;
+if LOGGING2                                            ;
+        mvn       r0, r0                               ;
+        add       r0, 1                                ; change neg to pos number
+        bl        Convert2Hex                          ; Get error code
+        print     print_hex_string,print_hex_string_size ;
+        print     msgE4,msgE4.msgE4_size               ;  error message 1
+end if                                                 ;
+        b         accept_loop                          ; branch if neg or zero
+align 4                                                ;
+;======================================================;
+; RECV(2)                                              ;
+;------------------------------------------------------;
+; The recv(2) and recvmsg() calls are used to receive  ;
+; messages from a socket, and may be used to receive   ;
+; data on a socket whether or not it is                ;
+; connection-oriented.                                 ;
+;                                                      ;
+; If src_addr is not NULL, and the underlying protocol ;
+; provides the source address, this source address is  ;
+; filled in. When src_addr is NULL, nothing is filled  ;
+; in, in this case, addrlen is not used, and should    ;
+; also be NULL. The argument addrlen is a value-result ;
+; argument, which the caller should initialize before  ;
+; the call to the size of the buffer associated with   ;
+; src_addr, and modified on return to indicate the     ;
+; actual size of the source address. The returned      ;
+; address is truncated if the buffer provided is too   ;
+; small,                                               ;
+; in this case, addrlen will return a value            ;
+; greater than was supplied to the call.               ;
+;------------------------------------------------------;
+accept_ok:                                             ;
+        imm32     r1, clientfd                         ;
+        str       r0, [r1]                             ;
+recv_loop:                                             ;
+        imm32     r0, clientfd                         ;
+        ldr       r0, [r0]                             ; client FD
+        imm32     r1, buffer                           ; buffer
+        imm32     r2, bufferlen                        ; buffer size
+        imm32     r3, 0                                ; No options
+        imm32     r7, 0x123                            ; RECV(2)
+        swi       0x0                                  ;
+                                                       ;
+        teq       r0, 0                                ; check for errors
+        blt       recv_loop                            ;
+        imm32     r1, recv_size                        ; get size of message
+        str       r0, [r1]                             ; store it
+;======================================================;
+; if logging2 then print buffer                        ;
+;------------------------------------------------------;
+if LOGGING2                                            ;
+        print     buffer, bufferlen                    ;
+;======================================================;
+; Next line                                            ;
+;------------------------------------------------------;
+        print     NextLine, NextLine.NextLine_size     ;
+                                                       ;
+end if                                                 ;
+;======================================================;
+; test for file                                        ;
+;------------------------------------------------------;
+        imm32     r0, buffer                           ;
+        ldr       r2, [r0], 4                          ;
+        imm32     r3, 'GET '                           ;
+        cmp       r2, r3                               ;
+        bne       close                                ;
+        eor       r1, r1                               ;
+        ldrb      r2, [r0], 1                          ;
+        cmp       r2, '/'                              ;
+        bne       close                                ;
+filewantedloop:                                        ;
+        ldrb      r2, [r0], 1                          ;
+        cmp       r2, ' '                              ;
+        beq       ItsSpace                             ;
+                                                       ;
+        imm32     r3, bufferwantedfile                 ;
+        strb      r2, [r3,r1]                          ;
+        add       r1, 1                                ;
+        b         filewantedloop                       ;
+ItsSpace:                                              ;
+        imm32     r3, bufferwantedfile                 ;
+        cmp       r1,0                                 ;
+        bne       Notjustspace                         ;
+        imm32     r6,"inde"                            ;
+        str       r6,[r3],4                            ;
+        imm32     r6,"x.ht"                            ;
+        str       r6,[r3],4                            ;
+        imm32     r6,"m"                               ;
+        strb      r6,[r3]                              ;
+        imm32     r3, bufferwantedfile                 ;
+        mov       r1,9                                 ;
+Notjustspace:                                          ;
+        mov       r4, 0                                ;
+        strb      r4, [r3,r1]                          ;
+        imm32     r4, offset                           ;
+        str       r1, [r4]                             ;
+;======================================================;
+; Is logging enabled ?                                 ;
+;------------------------------------------------------;
+; If logging has been enabled, itll use the function   ;
+; called ntop (at the bottom of this code) to convert  ;
+; the IP address of the person who connected to the    ;
+; server into a string form and print it.              ;
+;------------------------------------------------------;
+if LOGGING                                             ;
+        imm32     r2, client_addr_ip                   ;
+        ldr       r0, [r2, 4]                          ; mov eax, dword [peeraddr+4]
+        imm32     r3, client_addr_ip_Converted         ; mov edi, buffer+bufferlen-16
+        bl        ntop                                 ; call ntop
+        print_reg   client_addr_ip_Converted           ;
+end if                                                 ;
+;======================================================;
+; get file info                                        ;
+;------------------------------------------------------;
+fileisnamed:                                           ;
+        mov       r7, 106                              ;
+        imm32     r0, bufferwantedfile                 ;
+        imm32     r1, stat                             ;
+        swi       0x0                                  ;
+        cmp       r0, 0                                ;
+        beq       openfile                             ;
+                                                       ;
+;======================================================;
+; file not found                                       ;
+;------------------------------------------------------;
+        tcpsend   h404,h404.len                        ;
+;======================================================;
+; if logging print 404 message                         ;
+;------------------------------------------------------;
+if LOGGING                                             ;
+        print     l404,l404.len                        ;
+;======================================================;
+; Print wanted file name                               ;
+;------------------------------------------------------;
+        imm32     r2, offset                           ;
+        ldr       r2, [r2]                             ;
+        mov       r7, 0x4                              ;
+        mov       r0, 0x1                              ;
+        imm32     r1, bufferwantedfile                 ;
+                                                       ;
+        swi       0x0                                  ;
+;======================================================;
+; Next line                                            ;
+;------------------------------------------------------;
+        print     NextLine, NextLine.NextLine_size     ;
+end if                                                 ;
+        b         close                                ;
+                                                       ;
+;======================================================;
+; Try to open file                                     ;
+;------------------------------------------------------;
+openfile:                                              ;
+        imm32     r4, stat                             ;
+        ldr       r0, [r4,20]                          ;
+        imm32     r5, fdlen                            ;
+        str       r0, [r5]                             ;
+        mov       r7, 5                                ;
+        imm32     r0, bufferwantedfile                 ;
+        mov       r1 ,0                                ;
+        mov       r2 ,0                                ;
+        swi       0x0                                  ;
+        teq       r0, 0                                ; check for errors
+        bgt       fd_ok                                ;
+;======================================================;
+; Error when opeing file                               ;
+;------------------------------------------------------;
+        mvn       r0, r0                               ;
+        add       r0, 1                                ; change neg to pos number
+        bl        Convert2Hex                          ;
+        print     print_hex_string, print_hex_string_size
+        print     fderror,fderror_len                  ;
+        b         close                                ;
+;======================================================;
+; file found and ready to send                         ;
+;------------------------------------------------------;
+fd_ok:                                                 ;
+        imm32     r1, fd                               ;
+        str       r0, [r1]                             ;
+;======================================================;
+; if logging, print 200 OK message                     ;
+;------------------------------------------------------;
+if LOGGING                                             ;
+        print     l200,l200.len                        ;
+;======================================================;
+; Print wanted file name                               ;
+;------------------------------------------------------;
+        imm32     r2, offset                           ;
+        ldr       r2, [r2]                             ;
+        mov       r7, 0x4                              ;
+        mov       r0, 0x1                              ;
+        imm32     r1, bufferwantedfile                 ;
+                                                       ;
+        swi       0x0                                  ;
+;======================================================;
+; Next line                                            ;
+;------------------------------------------------------;
+        print     NextLine, NextLine.NextLine_size     ;
+end if                                                 ;
+;======================================================;
+; set header (eg: file size)                           ;
+;------------------------------------------------------;
+        imm32     r0, fdlen                            ;
+        ldr       r0, [r0]                             ;
+        imm32     r10, c_l                             ;
+        bl        IntToStr                             ;
+        mov       r1, 13                               ;
+        strb      r1, [r10],1                          ;
+        mov       r1, 10                               ;
+        strb      r1, [r10],1                          ;
+        mov       r1, 13                               ;
+        strb      r1, [r10],1                          ;
+        mov       r1, 10                               ;
+        strb      r1, [r10],1                          ;
+                                                       ;
+        imm32     r1, c_l                              ;
+        sub       r10, r1                              ;
+        imm32     r0, h200.len                         ;
+        add       r0, r10                              ;
+       ; print     NextLine, NextLine.NextLine_size    ;
+       ; print_reg h200 ;, h200.len                    ; temp
+       ; print     NextLine, NextLine.NextLine_size    ;
+;======================================================;
+; send header                                          ;
+;------------------------------------------------------;
+        tcpsend_reg h200                               ;
+;======================================================;
+; Send file                                            ;
+;------------------------------------------------------;
+        mov       r7, 187                              ;
+        imm32     r0, clientfd                         ;
+        ldr       r0, [r0]                             ;
+        imm32     r1, fd                               ;
+        ldr       r1, [r1]                             ;
+        mov       r2, 0                                ;
+        imm32     r3, fdlen                            ;
+        ldr       r3, [r3]                             ;
+        mov       r4, 0                                ;
+        swi       0x0                                  ;
+                                                       ;
+align 4                                                ;
+;======================================================;
+; Close socket and wait                                ;
+;------------------------------------------------------;
+close:                                                 ;
+        mov       r7, 6                                ;
+        imm32     r0, fd                               ;
+        ldr       r0, [r0]                             ;
+        swi       0x0                                  ;
+        mov       r7, 6                                ; CLOSE(2)
+        imm32     r0, clientfd                         ;
+        ldr       r0, [r0]                             ;
+        swi       0x0                                  ;
+        imm32     r0,buffer                            ;
+        eor       r1,r1                                ;
+        imm32     r2,bufferlen                         ;
+        mov       r2,r2, lsr 2                         ;
+align 4                                                ;
+ClearBuffLoop:                                         ;
+        str       r1,[r0],4                            ;
+        subs      r2,r2,1                              ;
+        bne       ClearBuffLoop                        ;
+        b         infinity                             ;
+align 4                                                ;
+;======================================================;
+; Close server and exit                                ;
+;------------------------------------------------------;
+fin:                                                   ; exit
+        print     msgclose,msgclose.msgclose_size      ;
+        mov       r0, 0x0                              ;
+        mov       r7, 0x1                              ;
+        swi       0x0                                  ;
+                                                       ;
+;======================================================;
+; Converts to hex                                      ;
+;  r0  = number ( prints 8 hex digits)                 ;
+;------------------------------------------------------;
+align 4                                                ;
+Convert2Hex:                                           ;
+        stmfd     sp!, {r0-r12, lr}                    ;
+        imm32     r2,hex_digits                        ;
+        imm32     r3,print_hex_string                  ;
+        mov       r4,28                                ;
+align 4                                                ;
+print_hex_loop:                                        ;
+        mov       r1,r0,lsr r4                         ; Get digit n
+        and       r1,r1,0x0f                           ; mask off lower nibble
+        ldrb      r1,[r2,r1]                           ; r0 now contains a hex number,
+                                                       ; look it up in table
+        strb      r1,[r3],1                            ;
+        subs      r4,r4,4                              ;
+        bpl       print_hex_loop                       ;
+                                                       ;
+        ldmfd     sp!, {r0-r12, pc}                    ; pop & return
+align 4                                                ;
+;======================================================;
+; String to int                                        ;
+; input: r3 = buffer, r4 = base (eg 10)                ;
+; output: r1 = number                                  ;
+;------------------------------------------------------;
+StrToInt:                                              ;
+        stmfd     sp!, {r2-r3, lr}                     ; save regs
+        eor       r1, r1                               ; zero r1 and r2
+        eor       r2, r2                               ;
+.loop:                                                 ;
+        ldrb      r2, [r3], 1                          ; load a byte
+        cmp       r2, 0                                ; check for 0
+        beq       .end                                 ; if so exit
+        mul       r1, r1, r4                           ; multiply with basic
+        sub       r2, r2, '0'                          ; sub ASCII value
+        cmp       r2, 9                                ; cmpare it to 9
+        ble       .ok                                  ; if its let or = jump to OK
+        sub       r2, 7                                ; if not sub 7 (eg: it A-F)
+.ok:                                                   ;
+        add       r1, r1, r2                           ; save it
+        b         .loop                                ; do another loop .loop
+.end:                                                  ;
+        ldmfd     sp!, {r2-r3, pc}                     ; restore regs and return.
+align 4                                                ;
+;======================================================;
+; write number to buffer                               ;
+;------------------------------------------------------;
+; r10 = buffer address                                 ;
+;------------------------------------------------------;
+number2buffer:                                         ;
+        stmfd     sp!, {lr}                            ;
+        strb      r0, [r10],1                          ;
+        ldmfd     sp!, {pc}                            ;
+align 4                                                ;
+;======================================================;
+; Int To String                                        ;
+;------------------------------------------------------;
+; input:  r0 = number                                  ;
+;         r10 = buffer                                 ;
+;                                                      ;
+; output: r10 = buffer + offset                        ;
+;------------------------------------------------------;                                                ;
+IntToStr:                                              ;
+        stmfd     sp!, {r0-r9, lr}                     ; save regs
+        imm32     r8,prt_digits                        ;
+                                                       ;
+        imm32     r6,0                                 ; current character to print
+        mov       r5,9                                 ; digits - 1 (max pos value 2147483647) (31 bits)
+        imm32     r9,0                                 ;
+                                                       ;
+                                                       ;
+        cmp       r0,0                                 ;
+        beq       zeronum                              ;
+        and       r7,r0,$80000000                      ; test bit 31 of r0
+        cmp       r7,0                                 ;
+        beq       posnum                               ; go to posnum if result equals zero (positive)
+                                                       ;
+        imm32     r2,$FFFFFFFF                         ;
+        eor       r0,r0,r2                             ; invert all bits of r0 (convert to positive)
+        mov       r2,r0                                ; backup r0 value
+        add       r2,r2,1                              ; add 1 to (now positive) value
+        imm32     r0,"-"                               ;
+        bl        number2buffer                        ; print negative (-) sign
+        mov       r0,r2                                ; restore r0 value
+                                                       ;
+posnum:                                                ;
+        imm32     r4,1000000000                        ;
+        subs      r1,r0,r4                             ; subtract r4 (power of 10 result) from starting value, store in r1
+        b         Printloop                            ;
+                                                       ;
+align 4                                                ;
+mainloop:                                              ;
+        imm32     r6,0                                 ; clear r6
+        mov       r2,r5                                ; back up value of r5
+        b         pow10                                ; lookup power of 10 from r5
+p10ret:                                                ;
+        mov       r5,r2                                ; restore r5 value
+        subs      r1,r1,r4                             ; subtract r4 (power of 10 result) from starting value, store in r1
+                                                       ;
+Printloop:                                             ;
+        ;print "At Printloop"                          ;
+        ;sync                                          ;
+        bpl       notmatched                           ; go to notmatched if result (r1) is not negative
+        add       r1,r1,r4                             ; add power of 10 value to r1
+        cmp       r6,0                                 ;
+        blt       nodigit                              ; if r6 is negative, reset to 0
+        b numfix                                       ;
+notmatched:                                            ;
+        ;-print "at notmatched"                        ;
+        add       r6,r6,1                              ; increment current character by 1
+        subs      r1,r1,r4                             ; subtract pow10 value from r1
+        b         Printloop                            ;
+numfix:                                                ;
+        mov       r3,r6                                ; update r3 from r6
+        ldrb      r3,[r8,r3]                           ; r3 now contains a number (ascii)
+        mov       r0,r3                                ; move ascii character to r0
+        cmp       r9,0                                 ; if r9 does not equal zero,
+        bne       allowprt                             ; go to allowprt (allow printing)
+        cmp       r0,'0'                               ; if r0 equals ascii zero,
+        beq       noprint                              ; go to noprint (disable printing leading zeros)
+        imm32     r9,1                                 ; set r9 to 1 (allow printing zeros)
+                                                       ;
+allowprt:                                              ;
+        bl        number2buffer                        ; print character to buffer
+noprint:                                               ;
+        subs      r5,r5,1                              ; decrement r5 (power of 10 mult) by 1
+        mov       r0,r1                                ; replace r0 with r1
+        bpl       mainloop                             ; go to mainloop if r5 is not negative
+        ;sync                                          ;
+        ;-end                                          ;
+finish:                                                ;
+        ;print "Done printing"                         ;
+        ;sync                                          ;
+        ldmfd     sp!, {r0-r9, pc}                     ; restore regs and return.
+zeronum:                                               ;
+        imm32     r0,"0"                               ;
+        bl        number2buffer                        ; print negative (-) sign
+        b         finish                               ;
+                                                       ;
+                                                       ;
+nodigit:                                               ;
+        imm32     r6,0                                 ;
+        b         numfix                               ;
+                                                       ;
+pow10:  ; calculate 10^x (r5 value)                    ;
+        ;r4 will contain result, r5 specifies power of 10 to calc
+        imm32     r4,10                                ;
+        cmp       r5,1                                 ;
+        bgt       p10mul                               ;
+        blt       p10p1                                ;
+        imm32     r4,10                                ;
+        b         p10ret                               ;
+p10p1:                                                 ;
+        imm32     r4,1                                 ;
+        b         p10ret                               ;
+p10mul:                                                ;
+        sub       r5,r5,1                              ;
+p10loop:                                               ;
+        imm32     r7,10                                ;
+        mul       r4,r4,r7                             ;
+        sub       r5,r5,1                              ;
+        cmp       r5,0                                 ;
+        bgt       p10loop                              ;
+        b         p10ret                               ;
+align 4                                                ;
+;======================================================;
+; ntop                                                 ;
+; r0 = network-order address, r3 = buffer              ;
+; returns: r10 = buffer + offset                       ;
+;------------------------------------------------------;
+ntop:                                                  ;
+; eax = network-order address, edi = buffer            ;
+; returns: ecx = length                                ;
+        stmfd     sp!, {r1-r12, lr}                    ; save regs push ebx edx ebp
+        mov       r10,r3                               ;
+        mov       r6, r3                               ;
+        mov       r1, r0                               ;
+        imm32     r2, 0x000000FF                       ;
+        and       r0, r2                               ;
+        mov       r4, 2                                ;
+;num4                                                  ;
+        bl        IntToStr                             ;
+        imm32     r2, '.'                              ;
+        strb      r2, [r10],1                          ;
+;num3                                                  ;
+        mov       r0, r1                               ;
+        imm32     r2, 0x0000FF00                       ;
+        and       r0, r2                               ;
+        mov       r0, r0, lsr 8                        ;
+        mov       r4, 2                                ;
+        bl        IntToStr                             ;
+        imm32     r2, '.'                              ;
+        strb      r2, [r10],1                          ;
+;num2                                                  ;
+        mov       r0, r1                               ;
+        imm32     r2, 0x00FF0000                       ;
+        and       r0, r2                               ;
+        mov       r0, r0, lsr 16                       ;
+        mov       r4, 2                                ;
+        bl        IntToStr                             ;
+        imm32     r2, '.'                              ;
+        strb      r2, [r10],1                          ;
+; num1                                                 ;
+        mov       r0, r1                               ;
+        mov       r0, r0, lsr 24                       ;
+        mov       r4, 2                                ;
+        bl        IntToStr                             ;
+                                                       ;
+        sub       r10, r6                              ;
+        mov       r0, r10                              ;
+        ldmfd     sp!, {r1-r12, pc}                    ; restore regs and return.ret
+
+; ---------------------------------------------------- ;
+; OutChar              ( print 1 character to stdout ) ;
+; ---------------------------------------------------- ;
+; put char = r0                                        ;
+; ---------------------------------------------------- ;
+OutChar:                                               ;
+        stmfd       sp!, {r0-r2, r7, lr}               ; Store registers
+        mov         r1, sp                             ; r1  address
+        mov         r0, 1                              ; r0  stdout
+        mov         r2, r0                             ; r2  length
+        mov         r7, 4                      ;
+        swi         0                                  ;
+        ldmfd       sp!, {r0-r2, r7, pc}               ; Restore registers and return
+;======================================================;
+; data                                                 ;
+;------------------------------------------------------;
+segment readable writeable                             ;
+if LOGGING                                             ;
+align 4                                                ;
+l404 db ' - 404 NF - '                                 ;
+.len = $ - l404                                        ;
+align 4                                                ;
+l200 db ' - 200 OK - '                                 ;
+.len = $ - l200                                        ;
+end if                                                 ;
+align 4                                                ;
+ipnumber dw     0xfefefefe                             ;
+align 4                                                ;
+prt_digits:                                            ;
+              db "0123456789"                          ;
+align 4                                                ;
+hex_digits:                                            ;
+                    db "0123456789ABCDEF"              ;
+align 4                                                ;
+print_hex_string:                                      ;
+                    db "12345678", 0xa                 ; storage for 8 digit hex string,
+print_hex_string_size = $-print_hex_string             ;
+align 4                                                ;
+client_addr_ip: rb 16                                  ;
+sixteen dw 16                                          ;
+align 4                                                ;
+sockaddr_in:                                           ;
+  .sin_family dh AF_INET                               ;
+  .sin_port   dh 0                                     ;
+  .sin_addr   dw 0                                     ;
+  .sin_zero   rb 8                                     ;
+dest_size = $-sockaddr_in                              ;
+align 4                                                ;
+client_addr   dw sockaddr_in                           ;
+addrlen       dw dest_size                             ;
+align 4                                                ;
+argc          dw 0                                     ;
+portnumber    dw 0                                     ;
+align 4                                                ;
+recv_size     dw 0                                     ;
+sockfd        dw 0                                     ;
+fd            dw 0                                     ;
+fdlen         dw 0                                     ;
+clientfd      dw 0                                     ;
+offset        dw 0                                     ;
+align 4                                                ;
+cArray        dw 0                                     ;
+              dw 0                                     ;
+              dw 0                                     ;
+              dw 0                                     ;
+              dw 0                                     ;
+align 4                                                ;
+;send 'array'.                                         ;
+sArray        dw 0                                     ;
+              dw 0                                     ;
+              dw 0                                     ;
+              dw 0                                     ;
+align 4                                                ;
+indexfile     db ".index.htm",0                        ;
+align 4                                                ;
+NextLine      db " " ,0xa                              ; Next line
+.NextLine_size = $-NextLine                            ;
+align 4                                                ;
+msgreceved    db " Server receved data" ,0xa           ; Message
+.msgreceved_size = $-msgreceved                        ;
+align 4                                                ;
+msg    db " Server started..." ,0xa                    ; Message
+.msg_size = $-msg                                      ;
+align 4                                                ;
+msgclose db " Server closed", 0xa                      ; Close
+.msgclose_size = $-msgclose                            ;
+align 4                                                ;
+msgsent db " Sent file", 0xa                           ; Send
+.msgsent_size = $-msgsent                              ;
+                                                       ;
+msgE1  db " socket() failed" ,0xa                      ; Err1
+.msgE1_size = $-msgE1                                  ;
+align 4                                                ;
+msgE2  db " bind() failed", 0xa                        ; Err2
+.msgE2_size = $-msgE2                                  ;
+align 4                                                ;
+msgE3  db " listen() failed", 0xa                      ; Err3
+.msgE3_size = $-msgE3                                  ;
+align 4                                                ;
+msgE4  db " accept() failed", 0xa                      ; Err4
+.msgE4_size = $-msgE4                                  ;
+align 4                                                ;
+msgE5  db " send() failed", 0xa                        ; Err5
+.msgE5_size = $-msgE5                                  ;
+align 4                                                ;
+fderror db " ERROR 1", 0xa                             ;
+fderror_len = $- fderror                               ;
+align 4                                                ;
+fderror2 db " ERROR 2", 0xa                            ;
+fderror_len2 = $- fderror2                             ;
+align 4                                                ;
+h404 db 'HTTP/1.0 404 Not Found',13,10,13,10,'<HTML><HEAD><TITLE>404 Not Found</TITLE></HEAD><BODY><H1>File Not Found</H1></BODY></HTML>',10,13
+.len = $ - h404                                        ;
+align 4                                                ;
+h200 db  'HTTP/1.0 200 OK',13,10                       ;
+     db  'Server: DexServer',13,10                     ;
+     db  'Content-Length: '                            ;
+.len = $ - h200                                        ;
+align 4                                                ;
+c_l  db  '                                            ';
+align 4                                                ;
+stat  rb 88                                            ;
+align 4                                                ;
+buffer  rb 512                                         ;
+bufferlen = $ - buffer                                 ;
+align 4                                                ;
+bufferwantedfile  rb 512                               ;
+align 4                                                ;
+client_addr_ip_Converted  rb 16                        ;
+align 4                                                ;                                             
