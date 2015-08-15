@@ -8,6 +8,10 @@ build:
 	docker build -t $(DOCKER_IMAGE_TAGNAME) .
 	docker tag -f $(DOCKER_IMAGE_TAGNAME) $(DOCKER_IMAGE_NAME):latest
 
+minimal:
+	docker build -t $(DOCKER_IMAGE_TAGNAME) -f Dockerfile.minimal .
+	docker tag -f $(DOCKER_IMAGE_TAGNAME) $(DOCKER_IMAGE_NAME):minimal
+
 push:
 	docker push $(DOCKER_IMAGE_NAME)
 
