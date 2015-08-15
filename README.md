@@ -1,4 +1,7 @@
 # rpi-nano-httpd
+
+[![dockeri.co](http://dockeri.co/image/hypriot/rpi-nano-httpd)](https://registry.hub.docker.com/u/hypriot/rpi-nano-httpd/)
+
 A nano sized web server packed into a Docker Nano Container
 
 
